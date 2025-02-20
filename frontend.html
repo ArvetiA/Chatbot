@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #1E1E1E;
+            color: white;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: auto;
+        }
+
+        .chat-container {
+            display: flex;
+            gap: 6px;
+            position: relative;
+            width: 100%;
+        }
+
+        .sidebar {
+            height: 100vh;
+            width: 250px;
+            background-color: #2d3748;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #newChatBtn, #clearChatBtn {
+            margin-bottom: 20px;
+        }
+
+        .chatbox-section {
+            flex-grow: 1;
+            width: 100%;
+            transition: width 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            background-color: #2d3748;
+            border-radius: 8px;
+            justify-content: flex-start;
+        }
+
+        #questionInput {
+            flex-shrink: 0; /* Prevent shrinking */
+            height: 50px; /* Ensure consistent height */
+        }
+
+        @media (max-width: 768px) {
+            #questionInput {
+                height: 40px; /* Smaller height for smaller screens */
+            }
+        }
+
+        #chatBox {
+            flex-grow: 1;
+            height: 500px;
+            overflow-y: auto;
+            padding-right: 10px;
+            background-color: #2d3748;
+            border-radius: 8px;
+        }
+
+        /* ✅ Loading Spinner */
+        #loadingSpinner {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 50px;
+            border: 4px solid white;
+            border-top: 4px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            z-index: 999;
+        }
+
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        button.text-red-500 {
+            display: inline-block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+
+        /* Chat history entry */
+        .chat-history-entry {
+            cursor: pointer;
+            padding: 10px;
+            border-bottom: 1px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-history-entry:hover {
+            background-color: #333;
+        }
+
+        .delete-btn {
+            color: #aaa;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .delete-btn:hover {
+            color: #f44336;
+        }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px;
+            border-radius: 8px;
+            opacity: 0;
+            z-index: 9999;
+            display: none;
+            transition: opacity 0.3s ease;
+        }
+    </style>
+</head>
+<body class="min-h-full bg-gray-900">
+    <div id="notification" class="notification"></div>
+
+    <div class="max-w-[1440px] mx-auto">
+        <header class="bg-gray-800 shadow-sm px-8 py-4">
+            <h1 class="text-2xl font-semibold text-white">PDF Chatbot</h1>
+        </header>
+
+        <main class="px-8 py-6 chat-container">
+            <div class="sidebar">
+                <button id="newChatBtn" class="w-full px-4 py-2 h-[min-h-full] rounded-lg flex items-center justify-center gap-2 bg-green-500 text-white">
+                    <i class="fas fa-plus"></i> New Chat
+                </button>
+                <button id="clearChatBtn" class="w-full px-4 py-2 h-[min-h-full] rounded-lg flex items-center justify-center gap-2 bg-gray-500 text-white">
+                    <i class="fas fa-trash"></i> Clear Chat
+                </button>
+
+                <div class="mt-6">
+                    <h3 class="text-lg font-semibold text-white">Chat History</h3>
+                    <div id="chatHistory" class="mt-4"></div>
+                </div>
+            </div>
+
+            <div id="chatBoxSection" class="chatbox-section dark-box rounded shadow-sm p-6">
+                <div id="chatBox" class="h-[min-h-full] border rounded-lg mb-6 p-4 overflow-y-auto dark-box"></div>
+                <div class="relative">
+                    <input type="file" class="hidden" id="pdfUpload" accept=".pdf" multiple>
+                    <input type="text" id="questionInput" placeholder="Ask a question..." 
+                        class="w-full px-4 py-3 pr-20 border rounded-lg bg-gray-700 text-white">
+                    <button id="attachBtn" class="absolute right-12 top-1/2 -translate-y-1/2 text-gray-300">
+                        <i class="fas fa-paperclip"></i>
+                    </button>
+                    <button id="askBtn" class="absolute right-3 top-1/2 -translate-y-1/2 text-primary">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ✅ Loading Spinner -->
+    <div id="loadingSpinner"></div>
+
+    <script>
+        let lastUploadedPDF = null;
+        let currentChatHistory = JSON.parse(localStorage.getItem('chatHistory')) || []; // Load from localStorage
+        let activeSessionId = null;  // Keep track of the current active session
+
+        // Save chat history to localStorage
+        function saveChatHistory() {
+            localStorage.setItem('chatHistory', JSON.stringify(currentChatHistory));
+        }
+
+        // Show success message
+        function showSuccess(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('bg-green-500', 'text-white');
+            notification.classList.remove('bg-red-500');
+            notification.style.display = 'block';
+
+            setTimeout(() => {
+                notification.style.opacity = '1';
+            }, 10);
+
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => {
+                    notification.style.display = 'none';
+                }, 500);
+            }, 3000); // Hide after 3 seconds
+        }
+
+        // Show error message
+        function showError(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('bg-red-500', 'text-white');
+            notification.classList.remove('bg-green-500');
+            notification.style.display = 'block';
+
+            setTimeout(() => {
+                notification.style.opacity = '1';
+            }, 10);
+
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => {
+                    notification.style.display = 'none';
+                }, 500);
+            }, 3000); // Hide after 3 seconds
+        }
+
+        // Handle the "Attach" button click (open file picker)
+        document.getElementById("attachBtn").addEventListener("click", function () {
+            document.getElementById("pdfUpload").click();  // Trigger file input click
+        });
+
+        // Handle the file selection and upload process
+        document.getElementById("pdfUpload").addEventListener("change", async function (event) {
+            const files = event.target.files;
+            if (files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append("files", files[0]);
+            lastUploadedPDF = files[0].name;
+
+            document.getElementById("loadingSpinner").style.display = "block"; // ✅ Show loading
+
+            try {
+                const response = await fetch("http://localhost:8000/upload/", { method: "POST", body: formData });
+                const result = await response.json();
+
+                if (response.ok) {
+                    showSuccess(`✅ PDF uploaded successfully: ${files[0].name}`);
+                } else {
+                    showError("❌ Upload failed. Please try again.");
+                }
+            } catch (error) {
+                showError("❌ Error uploading PDF.");
+                console.error("Error uploading PDF:", error);
+            } finally {
+                document.getElementById("loadingSpinner").style.display = "none"; // ✅ Hide loading
+            }
+        });
+
+        // Handle the "Ask" button click
+        document.getElementById("askBtn").addEventListener("click", async function () {
+            const questionInput = document.getElementById("questionInput");
+            const chatBox = document.getElementById("chatBox");
+
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            if (!lastUploadedPDF) {
+                showError("Please upload a PDF first!");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("question", question);
+            formData.append("pdf_name", lastUploadedPDF);
+
+            // If no active session, create a new session
+            if (activeSessionId === null) {
+                activeSessionId = currentChatHistory.length + 1; // Create a new session
+                currentChatHistory.push({ session: activeSessionId, questions: [] });
+            }
+
+            // Append the question to the active session
+            const activeSession = currentChatHistory.find(session => session.session === activeSessionId);
+            activeSession.questions.push({ question, answer: "..." }); // Placeholder answer
+
+            // Update the chatbox with the user's question
+            chatBox.innerHTML += `<p><strong>You:</strong> ${question}</p>`;
+            questionInput.value = "";
+
+            document.getElementById("loadingSpinner").style.display = "block"; // ✅ Show loading
+
+            try {
+                const response = await fetch("http://localhost:8000/ask/", { method: "POST", body: formData });
+                const data = await response.json();
+                const answer = data.response || "No valid response received.";
+
+                // Update the active session with the chatbot's answer
+                activeSession.questions[activeSession.questions.length - 1].answer = answer;
+
+                // Update the chatbox with the chatbot's response
+                chatBox.innerHTML += `<p><strong>Chatbot:</strong> ${answer}</p>`;
+
+                // Refresh chat history UI
+                updateChatHistoryUI();
+                saveChatHistory();  // Save chat history to localStorage
+            } catch (error) {
+                chatBox.innerHTML += `<p><strong>Error:</strong> Unable to get response.</p>`;
+            } finally {
+                document.getElementById("loadingSpinner").style.display = "none"; // ✅ Hide loading
+            }
+        });
+
+        // Update the sidebar with the latest chat history
+        function updateChatHistoryUI() {
+            const chatHistoryContainer = document.getElementById("chatHistory");
+            chatHistoryContainer.innerHTML = ""; // Clear previous history
+
+            currentChatHistory.forEach((entry) => {
+                const chatHistoryEntry = document.createElement("div");
+                chatHistoryEntry.classList.add("chat-history-entry");
+                chatHistoryEntry.innerHTML = `
+                    <span>${entry.questions[entry.questions.length - 1].question}</span>
+                    <span class="delete-btn" onclick="deleteQuestion(${entry.session})">🗑</span>`;
+
+                // Click to show the chat
+                chatHistoryEntry.addEventListener("click", function () {
+                    displayChatHistory(entry.session);
+                });
+
+                chatHistoryContainer.appendChild(chatHistoryEntry);
+            });
+        }
+
+        // Delete a question from the chat history
+        function deleteQuestion(sessionId) {
+            currentChatHistory = currentChatHistory.filter(session => session.session !== sessionId);
+            updateChatHistoryUI(); // Refresh chat history UI
+            saveChatHistory(); // Save chat history to localStorage
+        }
+
+        // Display selected chat history
+        function displayChatHistory(sessionId) {
+            const chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML = ""; // Clear the chat box
+
+            const chat = currentChatHistory.find(session => session.session === sessionId);
+            chat.questions.forEach(q => {
+                chatBox.innerHTML += `<p><strong>You:</strong> ${q.question}</p>`;
+                chatBox.innerHTML += `<p><strong>Chatbot:</strong> ${q.answer}</p>`;
+            });
+
+            // Set the active session
+            activeSessionId = sessionId;
+        }
+
+        // New Chat button to start a fresh session
+        document.getElementById("newChatBtn").addEventListener("click", function () {
+            document.getElementById("chatBox").innerHTML = ""; // Clear chat box for new session
+            activeSessionId = null; // Reset active session
+        });
+
+        // Clear Chat button to clear all chat history
+        document.getElementById("clearChatBtn").addEventListener("click", function () {
+            currentChatHistory = []; // Clear all chat history
+            saveChatHistory(); // Save empty history to localStorage
+            updateChatHistoryUI(); // Refresh chat history UI
+        });
+
+        // Load the chat history on page load
+        window.onload = updateChatHistoryUI;
+    </script>
+</body>
+</html>
